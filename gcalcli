@@ -67,7 +67,7 @@
 #############################################################################
 
 __program__ = 'gcalcli'
-__version__ = 'v3.3'
+__version__ = 'v3.3.2'
 __author__ = 'Eric Davis, Brian Hartvigsen'
 __doc__ = '''
 Usage:
@@ -122,6 +122,8 @@ Usage:
                                       --title 'Analysis of Algorithms Final'
                                       --where UCI
                                       --when '12/14/2012 10:00'
+                                      --who 'foo@bar.com'
+                                      --who 'baz@bar.com'
                                       --duration 60
                                       --description 'It is going to be hard!'
                                       --reminder 30
@@ -544,6 +546,7 @@ class gcalcli:
                  detailCalendar=False,
                  detailLocation=False,
                  detailAttendees=False,
+                 detailAttachments=False,
                  detailLength=False,
                  detailReminders=False,
                  detailDescr=False,
@@ -551,6 +554,7 @@ class gcalcli:
                  detailUrl=None,
                  detailEmail=False,
                  ignoreStarted=False,
+                 ignoreDeclined=False,
                  calWidth=10,
                  calMonday=False,
                  calOwnerColor=CLR_CYN(),
@@ -571,6 +575,7 @@ class gcalcli:
 
         self.military = military
         self.ignoreStarted = ignoreStarted
+        self.ignoreDeclined = ignoreDeclined
         self.calWidth = calWidth
         self.calMonday = calMonday
         self.tsv = tsv
@@ -587,6 +592,7 @@ class gcalcli:
         self.detailDescrWidth = detailDescrWidth
         self.detailUrl = detailUrl
         self.detailAttendees = detailAttendees
+        self.detailAttachments = detailAttachments
         self.detailEmail = detailEmail
 
         self.calOwnerColor = calOwnerColor
@@ -861,8 +867,8 @@ class gcalcli:
                 # newline and empty string are the keys to turn off coloring
                 weekEventStrings[dayNum] += \
                     "\n" + \
-                    str(eventColor) + \
-                    tmpTimeStr.strip() + \
+                    stringToUnicode(str(eventColor)) + \
+                    stringToUnicode(tmpTimeStr.strip()) + \
                     " " + \
                     self._ValidTitle(event).strip()
 
@@ -1148,6 +1154,8 @@ class gcalcli:
 
     def _tsv(self, startDateTime, eventList):
         for event in eventList:
+            if self.ignoreStarted and (event['s'] < self.now):
+                continue
             output = "%s\t%s\t%s\t%s" % (event['s'].strftime('%Y-%m-%d'),
                                          event['s'].strftime('%H:%M'),
                                          event['e'].strftime('%Y-%m-%d'),
@@ -1231,7 +1239,7 @@ class gcalcli:
         else:
             fmt = '  ' + timeFormat + '  %s\n'
             PrintMsg(self._CalendarColor(event['gcalcli_cal']), fmt %
-                     (tmpTimeStr, self._ValidTitle(event).strip()))
+                     (stringToUnicode(tmpTimeStr), self._ValidTitle(event).strip()))
 
         if self.detailCalendar:
             xstr = "%s  Calendar: %s\n" % (
@@ -1268,7 +1276,7 @@ class gcalcli:
                     detailsIndent,
                     event['organizer'].get('displayName', 'Not Provided')
                                       .strip(),
-                    event['organizer']['email'].strip()
+                    event['organizer'].get('email', 'Not Provided').strip()
                 )
                 PrintMsg(CLR_NRM(), xstr)
 
@@ -1277,9 +1285,22 @@ class gcalcli:
                     xstr = "%s    %s: <%s>\n" % (
                         detailsIndent,
                         attendee.get('displayName', 'Not Provided').strip(),
-                        attendee['email'].strip()
+                        attendee.get('email', 'Not Provided').strip()
                     )
                     PrintMsg(CLR_NRM(), xstr)
+
+        if self.detailAttachments and 'attachments' in event:
+            xstr = "%s  Attachments:\n" % (detailsIndent)
+            PrintMsg(CLR_NRM(), xstr)
+
+            for attendee in event['attachments']:
+                xstr = "%s    %s\n%s    -> %s\n" % (
+                    detailsIndent,
+                    attendee.get('title', 'Not Provided').strip(),
+                    detailsIndent,
+                    attendee.get('fileUrl', 'Not Provided').strip()
+                )
+                PrintMsg(CLR_NRM(), xstr)
 
         if self.detailLength:
             diffDateTime = (event['e'] - event['s'])
@@ -1524,6 +1545,11 @@ class gcalcli:
 
             if self.ignoreStarted and (event['s'] < self.now):
                 continue
+            if self.ignoreDeclined:
+                if 'attendees' in event:
+                    attendee = [a for a in event['attendees'] if a['email'] == event['gcalcli_cal']['id']][0]
+                    if attendee and attendee['responseStatus'] == 'declined':
+                        continue
 
             tmpDayStr = event['s'].strftime(dayFormat)
             prefix = None
@@ -1768,7 +1794,7 @@ class gcalcli:
             hLink = self._ShortenURL(newEvent['htmlLink'])
             PrintMsg(CLR_GRN(), 'New event added: %s\n' % hLink)
 
-    def AddEvent(self, eTitle, eWhere, eStart, eEnd, eDescr, reminder):
+    def AddEvent(self, eTitle, eWhere, eStart, eEnd, eDescr, eWho, reminder):
 
         if len(self.cals) != 1:
             PrintErrMsg("Must specify a single calendar\n")
@@ -1791,6 +1817,8 @@ class gcalcli:
             event['location'] = stringToUnicode(eWhere)
         if eDescr:
             event['description'] = stringToUnicode(eDescr)
+
+        event['attendees'] = map(lambda w: {'email': stringToUnicode(w)}, eWho)
 
         if reminder or not self.defaultReminders:
             event['reminders'] = {'useDefault': False,
@@ -2159,6 +2187,7 @@ gflags.DEFINE_bool("detail_all", False, "Display all details")
 gflags.DEFINE_bool("detail_calendar", False, "Display calendar name")
 gflags.DEFINE_bool("detail_location", False, "Display event location")
 gflags.DEFINE_bool("detail_attendees", False, "Display event attendees")
+gflags.DEFINE_bool("detail_attachments", False, "Display event attachments")
 gflags.DEFINE_bool("detail_length", False, "Display length of event")
 gflags.DEFINE_bool("detail_reminders", False, "Display reminders")
 gflags.DEFINE_bool("detail_description", False, "Display description")
@@ -2168,6 +2197,7 @@ gflags.DEFINE_enum("detail_url", None, ["long", "short"], "Set URL output")
 
 gflags.DEFINE_bool("tsv", False, "Use Tab Separated Value output")
 gflags.DEFINE_bool("started", True, "Show events that have started")
+gflags.DEFINE_bool("declined", True, "Show events that have been declined")
 gflags.DEFINE_integer("width", 10, "Set output width", short_name="w")
 gflags.DEFINE_bool("monday", False, "Start the week on Monday")
 gflags.DEFINE_bool("color", True, "Enable/Disable all color output")
@@ -2194,6 +2224,7 @@ gflags.DEFINE_multistring("reminder", [],
                           "minutes) and default to minutes.  METH is a string "
                           "'popup', 'email', or 'sms' and defaults to popup.")
 gflags.DEFINE_string("title", None, "Event title")
+gflags.DEFINE_multistring("who", [], "Event attendees")
 gflags.DEFINE_string("where", None, "Event location")
 gflags.DEFINE_string("when", None, "Event time")
 gflags.DEFINE_integer("duration", None,
@@ -2225,7 +2256,7 @@ gflags.RegisterValidator("details",
                                                  "location", "length",
                                                  "reminders", "description",
                                                  "longurl", "shorturl", "url",
-                                                 "attendees", "email"]
+                                                 "attendees", "attachments", "email"]
                                            for x in value))
 gflags.RegisterValidator("reminder",
                          lambda value: all(ParseReminder(x) for x in value))
@@ -2352,6 +2383,8 @@ def BowChickaWowWow():
             FLAGS['detail_url'].value = "long"
         if not FLAGS['detail_attendees'].present:
             FLAGS['detail_attendees'].value = True
+        if not FLAGS['detail_attachments'].present:
+            FLAGS['detail_attachments'].value = True
         if not FLAGS['detail_email'].present:
             FLAGS['detail_email'].value = True
     else:
@@ -2361,6 +2394,8 @@ def BowChickaWowWow():
             FLAGS['detail_location'].value = True
         if 'attendees' in FLAGS.details:
             FLAGS['detail_attendees'].value = True
+        if 'attachments' in FLAGS.details:
+            FLAGS['detail_attachments'].value = True
         if 'length' in FLAGS.details:
             FLAGS['detail_length'].value = True
         if 'reminders' in FLAGS.details:
@@ -2382,6 +2417,7 @@ def BowChickaWowWow():
                    detailCalendar=FLAGS.detail_calendar,
                    detailLocation=FLAGS.detail_location,
                    detailAttendees=FLAGS.detail_attendees,
+                   detailAttachments=FLAGS.detail_attachments,
                    detailLength=FLAGS.detail_length,
                    detailReminders=FLAGS.detail_reminders,
                    detailDescr=FLAGS.detail_description,
@@ -2389,6 +2425,7 @@ def BowChickaWowWow():
                    detailUrl=FLAGS.detail_url,
                    detailEmail=FLAGS.detail_email,
                    ignoreStarted=not FLAGS.started,
+                   ignoreDeclined=not FLAGS.declined,
                    calWidth=FLAGS.width,
                    calMonday=FLAGS.monday,
                    calOwnerColor=GetColor(FLAGS.color_owner),
@@ -2519,7 +2556,8 @@ def BowChickaWowWow():
         eStart, eEnd = GetTimeFromStr(FLAGS.when, FLAGS.duration)
 
         gcal.AddEvent(FLAGS.title, FLAGS.where, eStart, eEnd,
-                      FLAGS.description, FLAGS.reminder)
+                      FLAGS.description, FLAGS.who,
+                      FLAGS.reminder)
 
     elif args[0] == 'delete':
         eStart = None
