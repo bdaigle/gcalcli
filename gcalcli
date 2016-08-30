@@ -67,7 +67,7 @@
 #############################################################################
 
 __program__ = 'gcalcli'
-__version__ = 'v3.3.2'
+__version__ = 'v3.4.0'
 __author__ = 'Eric Davis, Brian Hartvigsen'
 __doc__ = '''
 Usage:
@@ -78,11 +78,13 @@ Usage:
 
   list                     list all calendars
 
-  search <text>            search for events
+  search <text> [start] [end]
+                           search for events within an optional time period
                            - case insensitive search terms to find events that
                              match these terms in any field, like traditional
                              Google search with quotes, exclusion, etc.
                            - for example to get just games: "soccer -practice"
+                           - [start] and [end] use the same formats as agenda
 
   agenda [start] [end]     get an agenda for a time period
                            - start time default is 12am today
@@ -792,6 +794,10 @@ class gcalcli:
         else:
             return "(No title)"
 
+    def _IsAllDay(self, event):
+        return event['s'].hour == 0 and event['s'].minute == 0 and \
+                        event['e'].hour == 0 and event['e'].minute == 0
+
     def _GetWeekEventStrings(self, cmd, curMonth,
                              startDateTime, endDateTime, eventList):
 
@@ -817,11 +823,7 @@ class gcalcli:
 
                 forceEventColorAsMarker = False
 
-                if event['s'].hour == 0 and event['s'].minute == 0 and \
-                        event['e'].hour == 0 and event['e'].minute == 0:
-                    allDay = True
-                else:
-                    allDay = False
+                allDay = self._IsAllDay(event)
 
                 if not nowMarkerPrinted:
                     if (DaysSinceEpoch(self.now) <
@@ -1231,15 +1233,17 @@ class gcalcli:
             prefix = indent
 
         PrintMsg(self.dateColor, prefix)
-        if event['s'].hour == 0 and event['s'].minute == 0 and \
-           event['e'].hour == 0 and event['e'].minute == 0:
+
+        happeningNow = event['s'] <= self.now <= event['e']
+        allDay = self._IsAllDay(event)
+        eventColor = self.nowMarkerColor if happeningNow and not allDay else self._CalendarColor(event['gcalcli_cal'])
+
+        if allDay:
             fmt = '  ' + timeFormat + '  %s\n'
-            PrintMsg(self._CalendarColor(event['gcalcli_cal']), fmt %
-                     ('', self._ValidTitle(event).strip()))
+            PrintMsg(eventColor, fmt % ('', self._ValidTitle(event).strip()))
         else:
             fmt = '  ' + timeFormat + '  %s\n'
-            PrintMsg(self._CalendarColor(event['gcalcli_cal']), fmt %
-                     (stringToUnicode(tmpTimeStr), self._ValidTitle(event).strip()))
+            PrintMsg(eventColor, fmt % (stringToUnicode(tmpTimeStr), self._ValidTitle(event).strip()))
 
         if self.detailCalendar:
             xstr = "%s  Calendar: %s\n" % (
@@ -1656,7 +1660,7 @@ class gcalcli:
             PrintMsg(self._CalendarColor(cal),
                      format % (cal['accessRole'], cal['summary']))
 
-    def TextQuery(self, searchText=''):
+    def TextQuery(self, searchText='', startText='', endText=''):
 
         # the empty string would get *ALL* events...
         if searchText == '':
@@ -1668,8 +1672,25 @@ class gcalcli:
         # TODO: Look at moving this into the _SearchForCalEvents
         #       Don't forget to clean up AgendaQuery too!
 
-        start = self.now if self.ignoreStarted else None
-        eventList = self._SearchForCalEvents(start, None, searchText)
+        if startText == '':
+            start = self.now if self.ignoreStarted else None
+        else:
+            try:
+                start = self.dateParser.fromString(startText)
+            except:
+                PrintErrMsg('Error: failed to parse start time\n')
+                return
+
+        if endText == '':
+            end = None
+        else:
+            try:
+                end = self.dateParser.fromString(endText)
+            except:
+                PrintErrMsg('Error: failed to parse end time\n')
+                return
+
+        eventList = self._SearchForCalEvents(start, end, searchText)
 
         if self.tsv:
             self._tsv(self.now, eventList)
@@ -1767,8 +1788,12 @@ class gcalcli:
         if eventText == '':
             return
 
-        if len(self.cals) != 1:
-            PrintErrMsg("Must specify a single calendar\n")
+        if len(self.cals) > 1:
+            PrintErrMsg("You must only specify a single calendar\n")
+            return
+
+        if len(self.cals) < 1:
+            PrintErrMsg("Calendar not specified or not found.\nIf \"gcalcli list\" doesn't find the calendar you're trying to use,\nyour cache file might be stale and you might need to remove it and try again\n")
             return
 
         newEvent = self._RetryWithBackoff(
@@ -2449,12 +2474,16 @@ def BowChickaWowWow():
         gcal.ListAllCalendars()
 
     elif args[0] == 'search':
-        if len(args) != 2:
+
+        if len(args) == 4: # start and end
+            gcal.TextQuery(stringToUnicode(args[1]), startText=args[2], endText=args[3])
+        elif len(args) == 3: # start
+            gcal.TextQuery(stringToUnicode(args[1]), startText=args[2])
+        elif len(args) == 2: # defaults
+            gcal.TextQuery(stringToUnicode(args[1]))
+        else:
             PrintErrMsg('Error: invalid search string\n')
             sys.exit(1)
-
-        # allow unicode strings for input
-        gcal.TextQuery(stringToUnicode(args[1]))
 
         if not FLAGS.tsv:
             sys.stdout.write('\n')
